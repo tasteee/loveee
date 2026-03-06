@@ -243,6 +243,7 @@
 	function initUI(list) {
 		var btnPrevDay = document.getElementById('btn-prev-day')
 		var btnNextDay = document.getElementById('btn-next-day')
+		var toolbar = document.querySelector('.toolbar')
 		var btnSearch = document.getElementById('btn-search')
 		var searchPanel = document.getElementById('search-panel')
 		var searchInput = document.getElementById('search-text-input')
@@ -265,11 +266,21 @@
 			}
 		})
 
+		function onViewportResize() {
+			var vvp = window.visualViewport
+			var keyboardHeight = Math.max(0, window.innerHeight - vvp.height - vvp.offsetTop)
+			toolbar.style.bottom = (keyboardHeight + 28) + 'px'
+			searchPanel.style.bottom = (keyboardHeight + 90) + 'px'
+		}
+
 		function openSearch() {
 			searchActive = true
 			searchPanel.classList.add('active')
 			btnSearch.classList.add('search-active')
 			searchInput.focus()
+			if (window.visualViewport) {
+				window.visualViewport.addEventListener('resize', onViewportResize)
+			}
 		}
 
 		function closeSearch() {
@@ -279,6 +290,11 @@
 			searchInput.value = ''
 			searchResultsList.innerHTML = ''
 			searchCountLabel.textContent = ''
+			if (window.visualViewport) {
+				window.visualViewport.removeEventListener('resize', onViewportResize)
+			}
+			toolbar.style.bottom = ''
+			searchPanel.style.bottom = ''
 		}
 
 		btnSearch.addEventListener('click', function () {
