@@ -51,7 +51,6 @@
 		'December'
 	]
 	var SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-	var CHUNK_SIZE = 1000
 
 	// ── Helpers ──────────────────────────────────────────────────────────────
 	function escHtml(s) {
@@ -80,6 +79,11 @@
 		return SHORT_MONTHS[month - 1] + ' ' + day + ', ' + dp[0] + ' at ' + h + ':' + m + ampm
 	}
 
+	function formatDateLabel(dateStr) {
+		var dp = dateStr.split('-')
+		return SHORT_MONTHS[parseInt(dp[1], 10) - 1] + ' ' + parseInt(dp[2], 10) + ', ' + dp[0]
+	}
+
 	// ── HTML builders ─────────────────────────────────────────────────────────
 	function buildDayRowHtml(dateStr) {
 		var dp = dateStr.split('-')
@@ -90,8 +94,6 @@
 			dateStr +
 			'" class="day-row" data-date="' +
 			dateStr +
-			'" data-label="' +
-			le +
 			'">' +
 			'<div class="day-line"></div><div class="day-label">' +
 			le +
@@ -178,41 +180,67 @@
 		)
 	}
 
-	// ── Chunked renderer ──────────────────────────────────────────────────────
-	function renderChunked(messages, container) {
-		var idx = 0
-		var prevDate = null
-		var total = messages.length
+	// ── State ─────────────────────────────────────────────────────────────────
+	var allMessages = []
+	var messagesByDate = {}
+	var sortedDates = []
+	var currentDayIndex = 0
 
-		function step() {
-			var end = Math.min(idx + CHUNK_SIZE, total)
-			var html = ''
-			for (; idx < end; idx++) {
-				try {
-					var msg = messages[idx]
-					var d = msg.timestamp.split(' ')[0]
-					if (d !== prevDate) {
-						html += buildDayRowHtml(d)
-						prevDate = d
-					}
-					html += buildMessageRowHtml(msg, idx)
-				} catch (e) {
-					console.warn('[thread] skipped message at index', idx, e)
-				}
-			}
-			container.insertAdjacentHTML('beforeend', html)
-			if (idx < total) {
-				requestAnimationFrame(step)
-			}
+	// ── Grouping ──────────────────────────────────────────────────────────────
+	function groupMessagesByDate(messages) {
+		allMessages = messages
+		messagesByDate = {}
+		for (var i = 0; i < messages.length; i++) {
+			var date = messages[i].timestamp.split(' ')[0]
+			if (!messagesByDate[date]) messagesByDate[date] = []
+			messagesByDate[date].push(i)
 		}
-
-		step()
+		sortedDates = Object.keys(messagesByDate).sort()
 	}
 
-	// ── UI (toolbar + search) — initialised immediately, queries DOM lazily ──
-	function initUI() {
+	// ── Day renderer ──────────────────────────────────────────────────────────
+	function renderDay(dayIndex, container) {
+		var dateStr = sortedDates[dayIndex]
+		var indices = messagesByDate[dateStr]
+		var html = buildDayRowHtml(dateStr)
+		for (var i = 0; i < indices.length; i++) {
+			var idx = indices[i]
+			try {
+				html += buildMessageRowHtml(allMessages[idx], idx)
+			} catch (e) {
+				console.warn('[thread] skipped message at index', idx, e)
+			}
+		}
+		container.innerHTML = html
+		window.scrollTo(0, 0)
+		updateToolbarLabels(dayIndex)
+	}
+
+	function updateToolbarLabels(dayIndex) {
+		var btnPrevDay = document.getElementById('btn-prev-day')
+		var btnNextDay = document.getElementById('btn-next-day')
 		var labelPrevDay = document.getElementById('label-prev-day')
 		var labelNextDay = document.getElementById('label-next-day')
+
+		if (dayIndex > 0) {
+			labelPrevDay.textContent = formatDateLabel(sortedDates[dayIndex - 1])
+			btnPrevDay.disabled = false
+		} else {
+			labelPrevDay.textContent = 'Start'
+			btnPrevDay.disabled = true
+		}
+
+		if (dayIndex < sortedDates.length - 1) {
+			labelNextDay.textContent = formatDateLabel(sortedDates[dayIndex + 1])
+			btnNextDay.disabled = false
+		} else {
+			labelNextDay.textContent = 'End'
+			btnNextDay.disabled = true
+		}
+	}
+
+	// ── UI (toolbar + search) ─────────────────────────────────────────────────
+	function initUI(list) {
 		var btnPrevDay = document.getElementById('btn-prev-day')
 		var btnNextDay = document.getElementById('btn-next-day')
 		var btnSearch = document.getElementById('btn-search')
@@ -223,59 +251,19 @@
 		var btnSearchSubmit = document.getElementById('btn-search-submit')
 		var searchActive = false
 
-		function getAbsoluteTop(el) {
-			return el.getBoundingClientRect().top + window.scrollY
-		}
-
-		function updateDayLabels() {
-			var dayRows = document.querySelectorAll('.day-row[data-date]')
-			var scrollY = window.scrollY + 80
-			var prevRow = null
-			var nextRow = null
-			for (var i = 0; i < dayRows.length; i++) {
-				var top = getAbsoluteTop(dayRows[i])
-				if (top < scrollY) {
-					prevRow = dayRows[i]
-				} else if (nextRow === null) {
-					nextRow = dayRows[i]
-				}
-			}
-			labelPrevDay.textContent = prevRow ? prevRow.dataset.label : 'Start'
-			labelNextDay.textContent = nextRow ? nextRow.dataset.label : 'End'
-		}
-
 		btnPrevDay.addEventListener('click', function () {
-			var dayRows = document.querySelectorAll('.day-row[data-date]')
-			var scrollY = window.scrollY
-			var target = null
-			for (var i = dayRows.length - 1; i >= 0; i--) {
-				if (getAbsoluteTop(dayRows[i]) < scrollY - 20) {
-					target = dayRows[i]
-					break
-				}
-			}
-			if (target) {
-				target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+			if (currentDayIndex > 0) {
+				currentDayIndex--
+				renderDay(currentDayIndex, list)
 			}
 		})
 
 		btnNextDay.addEventListener('click', function () {
-			var dayRows = document.querySelectorAll('.day-row[data-date]')
-			var scrollY = window.scrollY
-			var target = null
-			for (var i = 0; i < dayRows.length; i++) {
-				if (getAbsoluteTop(dayRows[i]) > scrollY + 80) {
-					target = dayRows[i]
-					break
-				}
-			}
-			if (target) {
-				target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+			if (currentDayIndex < sortedDates.length - 1) {
+				currentDayIndex++
+				renderDay(currentDayIndex, list)
 			}
 		})
-
-		window.addEventListener('scroll', updateDayLabels, { passive: true })
-		updateDayLabels()
 
 		function openSearch() {
 			searchActive = true
@@ -336,22 +324,6 @@
 			return prefix + before + '<mark>' + match + '</mark>' + after + suffix
 		}
 
-		searchResultsList.addEventListener('click', function (e) {
-			var item = e.target.closest('.search-result-item')
-			if (!item) {
-				return
-			}
-			var msgEl = document.getElementById(item.dataset.msgId)
-			if (!msgEl) {
-				return
-			}
-			msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-			msgEl.classList.add('jump-highlight')
-			setTimeout(function () {
-				msgEl.classList.remove('jump-highlight')
-			}, 2500)
-		})
-
 		function performSearch() {
 			var query = searchInput.value
 			if (!query.trim()) {
@@ -360,31 +332,54 @@
 				return
 			}
 			var lowerQuery = query.toLowerCase()
-			var allMessageRows = document.querySelectorAll('.message-row[data-search-text]')
-			var matches = Array.from(allMessageRows).filter(function (el) {
-				var text = (el.dataset.searchText || '').trim()
-				return text !== '' && text.toLowerCase().indexOf(lowerQuery) !== -1
-			})
+			var matches = []
+			for (var i = 0; i < allMessages.length; i++) {
+				var msg = allMessages[i]
+				var text = (msg.text || '').trim()
+				if (text && text.toLowerCase().indexOf(lowerQuery) !== -1) {
+					matches.push({ msg: msg, globalIdx: i, date: msg.timestamp.split(' ')[0] })
+				}
+			}
 			searchCountLabel.textContent = matches.length > 0 ? matches.length + ' result' + (matches.length !== 1 ? 's' : '') : ''
 			if (matches.length === 0) {
 				searchResultsList.innerHTML = '<div class="search-empty-state">No messages found</div>'
 				return
 			}
 			var html = ''
-			for (var i = 0; i < matches.length; i++) {
-				var el = matches[i]
-				var rawText = el.dataset.searchText || ''
-				var timeEl = el.querySelector('.bubble-time')
-				var timeLabel = timeEl ? escHtml(timeEl.textContent || '') : ''
-				var sender = el.classList.contains('from-me') ? 'You' : 'Them'
-				var snippet = buildSnippet(rawText, query)
-				html += '<div class="search-result-item" data-msg-id="' + escHtml(el.id) + '">'
+			for (var j = 0; j < matches.length; j++) {
+				var m = matches[j]
+				var timeLabel = escHtml(formatTimestamp(m.msg.timestamp))
+				var sender = m.msg.isFromMe ? 'You' : 'Them'
+				var snippet = buildSnippet(m.msg.text || '', query)
+				html += '<div class="search-result-item" data-msg-id="msg-' + m.globalIdx + '" data-date="' + escHtml(m.date) + '">'
 				html += '<div class="result-meta">' + sender + ' &middot; ' + timeLabel + '</div>'
 				html += '<div class="result-text">' + snippet + '</div>'
 				html += '</div>'
 			}
 			searchResultsList.innerHTML = html
 		}
+
+		searchResultsList.addEventListener('click', function (e) {
+			var item = e.target.closest('.search-result-item')
+			if (!item) return
+			var date = item.dataset.date
+			var msgId = item.dataset.msgId
+			var dayIndex = sortedDates.indexOf(date)
+			if (dayIndex === -1) return
+			currentDayIndex = dayIndex
+			renderDay(currentDayIndex, list)
+			closeSearch()
+			setTimeout(function () {
+				var msgEl = document.getElementById(msgId)
+				if (msgEl) {
+					msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+					msgEl.classList.add('jump-highlight')
+					setTimeout(function () {
+						msgEl.classList.remove('jump-highlight')
+					}, 2500)
+				}
+			}, 50)
+		})
 
 		btnSearchSubmit.addEventListener('click', performSearch)
 		searchInput.addEventListener('keydown', function (e) {
@@ -398,7 +393,7 @@
 	var list = document.querySelector('.messages-list')
 	list.innerHTML = '<div style="padding:32px 20px;opacity:0.45;font-size:14px">Loading messages\u2026</div>'
 
-	initUI()
+	initUI(list)
 
 	fetch('thread.json')
 		.then(function (res) {
@@ -423,8 +418,9 @@
 				return
 			}
 
-			list.innerHTML = ''
-			renderChunked(messages, list)
+			groupMessagesByDate(messages)
+			currentDayIndex = 0
+			renderDay(currentDayIndex, list)
 		})
 		.catch(function (err) {
 			console.error('[thread] fetch/parse error:', err)
